@@ -1257,6 +1257,207 @@
         },
     };
 
+    function sanitizeSurgeName(name) {
+        const cleaned = String(name || 'CFnew-Trojan')
+            .replace(/[\r\n=,]/g, '_')
+            .trim();
+        return cleaned || 'CFnew-Trojan';
+    }
+
+    function sanitizeSurgeValue(value) {
+        return String(value || '')
+            .replace(/[\r\n,]/g, '_')
+            .trim();
+    }
+
+    function sanitizeSurgeServer(value) {
+        const cleaned = sanitizeSurgeValue(value);
+        if (cleaned.startsWith('[') && cleaned.endsWith(']') && cleaned.includes(':')) {
+            return cleaned.slice(1, -1);
+        }
+        return cleaned;
+    }
+
+    function parseLinkToSurgeProxy(link) {
+        try {
+            if (!link.startsWith('trojan://')) {
+                return null;
+            }
+
+            const url = new URL(link);
+            const params = new URLSearchParams(url.search);
+            const transport = (params.get('type') || '').toLowerCase();
+            if (transport && transport !== 'ws') {
+                return null;
+            }
+
+            const server = sanitizeSurgeServer(url.hostname);
+            const port = parseInt(url.port) || 443;
+            const password = sanitizeSurgeValue(decodeURIComponent(url.username || ''));
+            if (!server || !password) {
+                return null;
+            }
+
+            const rawName = url.hash ? decodeURIComponent(url.hash.substring(1)) : `Trojan-${server}-${port}`;
+            const name = sanitizeSurgeName(rawName);
+            const sni = sanitizeSurgeValue(params.get('sni') || params.get('peer') || params.get('host') || server);
+            const host = sanitizeSurgeValue(params.get('host') || sni || server);
+            const path = sanitizeSurgeValue(params.get('path') || '/');
+            const options = [
+                'trojan',
+                server,
+                String(port),
+                `password=${password}`,
+                'udp-relay=false',
+                'skip-cert-verify=false'
+            ];
+
+            if (sni) {
+                options.push(`sni=${sni}`);
+            }
+
+            if (transport === 'ws' || params.get('host') || params.get('path')) {
+                options.push('ws=true');
+                options.push(`ws-path=${path}`);
+                if (host) {
+                    options.push(`ws-headers=Host:${host}`);
+                }
+            }
+
+            return {
+                name,
+                value: ` = ${options.join(', ')}`
+            };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function generateSurgeConfig(links) {
+        const proxies = [];
+        const nameCounts = {};
+
+        for (const link of links) {
+            const proxy = parseLinkToSurgeProxy(link);
+            if (!proxy) {
+                continue;
+            }
+
+            const count = (nameCounts[proxy.name] || 0) + 1;
+            nameCounts[proxy.name] = count;
+            const name = count === 1 ? proxy.name : `${proxy.name}-${String(count).padStart(2, '0')}`;
+            proxies.push({
+                name,
+                line: `${name}${proxy.value}`
+            });
+        }
+
+        const proxyNames = proxies.map(proxy => proxy.name);
+        const primaryGroup = proxyNames.length > 0
+            ? `🚀 节点选择 = select, ${proxyNames.join(', ')}, DIRECT`
+            : '🚀 节点选择 = select, DIRECT';
+        const manualGroup = proxyNames.length > 0
+            ? `☑️ 手动切换 = select, ${proxyNames.join(', ')}, DIRECT`
+            : '☑️ 手动切换 = select, DIRECT';
+        const autoGroup = proxyNames.length > 0
+            ? `♻️ 自动选择 = url-test, ${proxyNames.join(', ')}, url=https://www.gstatic.com/generate_204, interval=600, tolerance=100`
+            : '♻️ 自动选择 = select, DIRECT';
+        const proxiesGroup = proxyNames.length > 0
+            ? `Proxies = select, ${proxyNames.join(', ')}, ♻️ 自动选择, DIRECT`
+            : 'Proxies = select, DIRECT';
+        const serviceGroupNames = [
+            'Netflix',
+            'HBO',
+            'DisneyPlus',
+            'YouTube',
+            'Bahamut',
+            'Bilibili',
+            'MyTVSuper',
+            'AI',
+            'Telegram',
+            'Crypto',
+            'Steam',
+            'Epic',
+            'Xbox',
+            'PlayStation',
+            'Microsoft',
+            'Scholar',
+            'Apple',
+            'Google',
+            'Tiktok'
+        ];
+        const serviceGroups = serviceGroupNames.map(name => `${name} = select, Proxies, 🎯Direct`);
+        const ruleLines = [
+            'RULE-SET,https://rawstatic.com/nexitallyy/ProxyRules/main/Extra_CN_3.list,🎯Direct,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/blackmatrix7/ios_rule_script/master/rule/Clash/GlobalScholar/GlobalScholar.list,Scholar,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/blackmatrix7/ios_rule_script/master/rule/Clash/myTVSUPER/myTVSUPER.list,MyTVSuper,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/nexitallyy/ProxyRules/main/Extra_Crypto.list,Crypto,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/nexitallyy/ProxyRules/main/Extra_AI.list,AI,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/blackmatrix7/ios_rule_script/master/rule/Clash/Google/Google.list,Google,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/YouTube.list,YouTube,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/blackmatrix7/ios_rule_script/master/rule/Clash/Game/GameDownload/GameDownload.list,🎯Direct,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/ACL4SSR/ACL4SSR/master/Clash/LocalAreaNetwork.list,🎯Direct,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/ACL4SSR/ACL4SSR/master/Clash/ChinaCompanyIp.list,🎯Direct,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/HotKids/Rules/master/Surge/RULE-SET/Netflix.list,Netflix,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/ACL4SSR/ACL4SSR/master/Clash/Telegram.list,Telegram,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/blackmatrix7/ios_rule_script/master/rule/Clash/Steam/Steam.list,Steam,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/blackmatrix7/ios_rule_script/master/rule/Clash/Epic/Epic.list,Epic,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/blackmatrix7/ios_rule_script/master/rule/Clash/Xbox/Xbox.list,Xbox,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/blackmatrix7/ios_rule_script/master/rule/Surge/PlayStation/PlayStation.list,PlayStation,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/HotKids/Rules/master/Surge/RULE-SET/HBO_Max.list,HBO,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/blackmatrix7/ios_rule_script/master/rule/Clash/HBOUSA/HBOUSA.list,HBO,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/blackmatrix7/ios_rule_script/master/rule/Clash/HBOHK/HBOHK.list,HBO,update-interval=86400',
+            'RULE-SET,https://www.naiixi.com/DisneyPlus.list,DisneyPlus,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Bahamut.list,Bahamut,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/HotKids/Rules/master/Surge/RULE-SET/Bilibili.list,Bilibili,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/ACL4SSR/ACL4SSR/master/Clash/Microsoft.list,Microsoft,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/ACL4SSR/ACL4SSR/master/Clash/Apple.list,Apple,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/blackmatrix7/ios_rule_script/master/rule/Clash/TikTok/TikTok.list,Tiktok,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/ACL4SSR/ACL4SSR/master/Clash/ProxyLite.list,Proxies,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/blackmatrix7/ios_rule_script/master/rule/Clash/Facebook/Facebook.list,Proxies,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/nexitallyy/ProxyRules/refs/heads/main/Extra_Proxies.list,Proxies,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/blackmatrix7/ios_rule_script/master/rule/Clash/Twitter/Twitter.list,Proxies,update-interval=86400',
+            'RULE-SET,https://www.naiixi.com/Extra_CN.list,🎯Direct,update-interval=86400',
+            'RULE-SET,https://www.naiixi.com/Extra_CN_2.list,🎯Direct,update-interval=86400',
+            'RULE-SET,https://rawstatic.com/blackmatrix7/ios_rule_script/master/rule/Surge/WeChat/WeChat.list,🎯Direct,update-interval=86400',
+            'GEOIP,CN,🎯Direct',
+            'FINAL,✈️Final'
+        ];
+
+        const proxyLines = proxies.length > 0 ? proxies.map(proxy => proxy.line) : ['# No compatible Trojan nodes found'];
+
+        return [
+            '#!MANAGED-CONFIG CFnew Surge',
+            '',
+            '[General]',
+            'loglevel = notify',
+            'hijack-dns = *:53',
+            'skip-proxy = 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, ::1/128, fc00::/7, fe80::/10, localhost, *.local, captive.apple.com, e.crashlytics.com',
+            'bypass-tun = 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, fc00::/7',
+            'dns-server = 119.29.29.29, 223.5.5.5',
+            'bypass-system = true',
+            'proxy-test-url = http://www.gstatic.com/generate_204',
+            '',
+            '[Proxy]',
+            ...proxyLines,
+            'DIRECT = direct',
+            '',
+            '[Proxy Group]',
+            proxiesGroup,
+            primaryGroup,
+            manualGroup,
+            autoGroup,
+            ...serviceGroups,
+            '🎯Direct = select, DIRECT, Proxies',
+            '🎯 全球直连 = select, DIRECT, Proxies',
+            '✈️Final = select, Proxies, 🎯Direct',
+            '🐟 漏网之鱼 = select, Proxies, 🎯Direct',
+            '',
+            '[Rule]',
+            ...ruleLines
+        ].join('\n');
+    }
+
     function generateQuantumultConfig(links) {
         return btoa(links.join('\n'));
     }
@@ -3361,8 +3562,27 @@
                     // 检查 ECH 是否开启
                     var echEnabled = document.getElementById('ech') && document.getElementById('ech').checked;
 
-                    // 如果 ECH 开启且是 Clash，直接使用后端接口
-                    if (echEnabled && clientType === atob('Y2xhc2g=')) {
+                    // Surge 直接使用内置生成器，避免外部转换服务丢弃 Trojan-WS 节点
+                    if (clientType === atob('c3VyZ2U=')) {
+                        finalUrl = subscriptionUrl + "?target=" + clientType;
+                        var urlElement = document.getElementById("clientSubscriptionUrl");
+                        urlElement.textContent = finalUrl;
+                        urlElement.style.display = "block";
+                        urlElement.style.overflowWrap = "break-word";
+                        urlElement.style.wordBreak = "break-all";
+                        urlElement.style.overflowX = "auto";
+                        urlElement.style.maxWidth = "100%";
+                        urlElement.style.boxSizing = "border-box";
+
+                        schemeUrl = 'surge:///install-config?url=' + encodeURIComponent(finalUrl);
+                        displayName = 'SURGE';
+
+                        tryOpenApp(schemeUrl, function() {
+                            navigator.clipboard.writeText(finalUrl).then(function() {
+                                alert(displayName + " " + t.subscriptionCopied);
+                            });
+                        });
+                    } else if (echEnabled && clientType === atob('Y2xhc2g=')) {
                         finalUrl = subscriptionUrl + "?target=" + clientType;
                         var urlElement = document.getElementById("clientSubscriptionUrl");
                         urlElement.textContent = finalUrl;
